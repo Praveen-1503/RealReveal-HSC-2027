@@ -1,0 +1,25 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Build output and virtual environments
+node_modules/
+dist/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.log
+.ipynb_checkpoints/
+
+# Third-party data is not included in the submission bundle
+backend/testing images/
+training/data/
+training/outputs/
+
+# Only the working inference checkpoint is distributed
+backend/best_effb0_shortrun.h5

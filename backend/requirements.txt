@@ -1,0 +1,8 @@
+Flask==3.1.2
+tensorflow==2.20.0
+keras==3.13.2
+Pillow==12.1.0
+numpy==2.4.2
+python-dotenv==1.2.1
+flask-cors==6.0.2
+gunicorn==25.0.1
