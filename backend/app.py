@@ -14,12 +14,16 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 try:
     from .explanations import build_explainer, explain_prediction
+    from .attention import build_attention_model, explain_attention
+    from .vision import build_visual_reviewer, review_image
 except ImportError:
     from explanations import build_explainer, explain_prediction
+    from attention import build_attention_model, explain_attention
+    from vision import build_visual_reviewer, review_image
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
-ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
+ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "AVIF"}
 
 
 def load_detector(path):
@@ -40,6 +44,7 @@ def create_app(model=None, config=None):
         MAX_CONTENT_LENGTH=int(os.getenv("MAX_UPLOAD_MB", "8")) * 1024 * 1024,
         MAX_IMAGE_PIXELS=20_000_000,
         REAL_THRESHOLD=float(os.getenv("REAL_THRESHOLD", "0.5")),
+        IBM_VISION_REQUESTED=os.getenv('ENABLE_IBM_VISION', '0') == '1',
         CORS_ORIGINS=os.getenv(
             "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
         ).split(","),
@@ -54,7 +59,9 @@ def create_app(model=None, config=None):
     app.config["MODEL_PATH"] = str(model_path)
     CORS(app, resources={r"/*": {"origins": app.config["CORS_ORIGINS"]}})
     app.extensions["detector"] = model
+    app.extensions["attention_model"] = None
     app.extensions["text_generator"] = build_explainer()
+    app.extensions["visual_reviewer"] = build_visual_reviewer()
     lock = threading.Lock()
 
     def get_model():
@@ -68,6 +75,9 @@ def create_app(model=None, config=None):
             status="ok",
             model_file_exists=model_path.is_file(),
             model_loaded=app.extensions["detector"] is not None,
+            ibm_vision_enabled=app.extensions["visual_reviewer"] is not None,
+            ibm_vision_requested=app.config['IBM_VISION_REQUESTED'],
+            ibm_text_enabled=app.extensions["text_generator"] is not None,
         )
 
     @app.errorhandler(RequestEntityTooLarge)
@@ -86,10 +96,11 @@ def create_app(model=None, config=None):
                 warnings.simplefilter("error", Image.DecompressionBombWarning)
                 with Image.open(io.BytesIO(upload.read())) as image:
                     if image.format not in ALLOWED_FORMATS:
-                        return jsonify(error="Supported formats: JPEG, PNG and WEBP."), 415
+                        return jsonify(error="Unsupported image format. Use JPEG, PNG, WEBP or AVIF."), 415
                     if image.width * image.height > app.config["MAX_IMAGE_PIXELS"]:
                         return jsonify(error="Image dimensions exceed the pixel limit."), 413
                     image.load()
+                    source_image = ImageOps.exif_transpose(image).convert('RGB').copy()
                     input_data = preprocess_image(image)
         except (Image.DecompressionBombError, Image.DecompressionBombWarning):
             return jsonify(error="Image dimensions exceed the pixel limit."), 413
@@ -116,11 +127,34 @@ def create_app(model=None, config=None):
 
         label = "Real" if score > app.config["REAL_THRESHOLD"] else "Deepfake"
         confidence = round((score if label == "Real" else 1 - score) * 100, 2)
-        explanation = explain_prediction(label, confidence, app.extensions["text_generator"])
+        visual_evidence = None
+        try:
+            with lock:
+                if app.extensions["attention_model"] is None:
+                    app.extensions["attention_model"] = build_attention_model(detector)
+                visual_evidence = explain_attention(
+                    detector, app.extensions["attention_model"], input_data, label, source_image
+                )
+        except Exception:
+            app.logger.warning("Model attention could not be computed; prediction is still available.")
+        visual_review = review_image(source_image, app.extensions['visual_reviewer'])
+        if visual_review is None and app.config['IBM_VISION_REQUESTED']:
+            visual_review = {
+                'status': 'unavailable', 'provider': 'IBM Watsonx',
+                'error': 'IBM visual review is enabled but not connected. Check the API key, workspace and vision model configuration.',
+            }
+        if visual_review and visual_review['status'] == 'success':
+            explanation = visual_review['explanation']
+        else:
+            explanation = explain_prediction(
+                label, confidence, app.extensions["text_generator"], evidence=visual_evidence
+            )
         return jsonify(
             detection=label,
             confidence=confidence,
             explanation=explanation,
+            visual_evidence=visual_evidence,
+            visual_review=visual_review,
             advisory="Model prediction only; verify the source before trusting or sharing.",
         )
 

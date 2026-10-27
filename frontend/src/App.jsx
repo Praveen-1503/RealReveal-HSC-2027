@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
-import { ShieldCheck, UploadCloud, Cpu, Zap, Lock, ChevronDown, ChevronUp, Twitter, Linkedin, Github, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
+import { ShieldCheck, UploadCloud, Cpu, Zap, Lock, ChevronDown, ChevronUp, Twitter, Linkedin, Github, RefreshCw } from 'lucide-react';
+import AnalysisSummary from './AnalysisSummary';
+import { requestPrediction } from './api';
 import './App.css'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5002').replace(/\/$/, '');
@@ -11,6 +13,7 @@ const App = () => {
   const [image, setImage] = useState(null);
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
+  const [uploadError, setUploadError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -55,12 +58,23 @@ const App = () => {
     }
   };
 
+  const selectImage = useCallback((file) => {
+    if (!file) return;
+    setResult(null);
+    setUploadError(null);
+    if (file.type && !file.type.startsWith('image/')) {
+      setImage(null);
+      setIsLoading(false);
+      setUploadError('Choose a JPEG, PNG, WEBP or AVIF image.');
+      return;
+    }
+    setImage(file);
+  }, []);
+
   // Handle file selection
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file && file.type.startsWith('image/')) {
-      setImage(file);
-    }
+    selectImage(file);
   };
 
   // Handle drag and drop
@@ -68,10 +82,8 @@ const App = () => {
     e.preventDefault();
     e.stopPropagation();
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-        setImage(file);
-    }
-  }, []);
+    selectImage(file);
+  }, [selectImage]);
 
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
@@ -92,38 +104,28 @@ const App = () => {
     // Call the backend API
     setIsLoading(true);
     setResult(null);
+    setUploadError(null);
     const controller = new AbortController();
 
     const analyzeImage = async () => {
       try {
-        const formData = new FormData();
-        formData.append('file', image);
-
-        const response = await fetch(`${API_BASE_URL}/predict`, {
-          method: 'POST',
-          body: formData,
-          signal: controller.signal,
+        const data = await requestPrediction(image, {
+          baseUrl: API_BASE_URL, signal: controller.signal,
         });
-
-        if (!response.ok) {
-          throw new Error('Failed to analyze image');
-        }
-
-        const data = await response.json();
+        if (controller.signal.aborted) return;
         setResult({
           detection: data.detection,
           confidence: data.confidence,
-          explanation: data.explanation
+          explanation: data.explanation,
+          visual_evidence: data.visual_evidence,
+          visual_review: data.visual_review,
         });
         setIsLoading(false);
       } catch (error) {
         if (controller.signal.aborted) return;
         console.error('Error analyzing image:', error);
-        setResult({
-          detection: 'Error',
-          confidence: 0,
-          explanation: 'Failed to analyze image. Please try again.'
-        });
+        setResult(null);
+        setUploadError(error.message);
         setIsLoading(false);
       }
     };
@@ -145,6 +147,7 @@ const App = () => {
     setImage(null);
     setPreview(null);
     setResult(null);
+    setUploadError(null);
     setIsLoading(false);
     if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -158,11 +161,11 @@ const App = () => {
     },
     {
       question: "What types of image formats can I upload?",
-      answer: "Currently, we support JPEG, PNG, and WEBP formats. We are working on expanding our support to include more formats and even video analysis in the future."
+      answer: "We support JPEG, PNG, WEBP and AVIF images up to 8 MB. Other image formats must be exported to a supported format first. Video analysis is not supported."
     },
     {
       question: "Is my data secure when I upload an image?",
-      answer: "The default local API processes image bytes in memory without saving them to disk or sending them to an external AI service. If you use a hosted server, your image is sent to that operator. Optional cloud guidance receives the prediction label and score only."
+      answer: "The local API processes images without intentionally saving them. When IBM visual review is enabled, a resized copy of your uploaded image is sent to IBM Watsonx for analysis. The local classifier and heatmap run on this computer. Text-only IBM guidance receives the prediction and attention summary."
     },
   ];
 
@@ -222,10 +225,11 @@ const App = () => {
                         onDragOver={handleDragOver}
                         onClick={() => fileInputRef.current.click()}
                     >
-                      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" className="hidden" />
+                      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/jpeg,image/png,image/webp,image/avif" className="hidden" />
                       <UploadCloud className="w-16 h-16 text-gray-500 mx-auto mb-4 group-hover:text-blue-400 transition-colors" />
                       <h3 className="text-xl font-semibold text-white mb-2">Drag & Drop Your Image Here</h3>
                       <p className="text-gray-500 mb-6">or click to browse files</p>
+                      <p className="text-xs text-gray-400 mb-4">When IBM visual review is enabled, uploaded images are sent to IBM Watsonx.</p>
                       <Motion.button
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
@@ -238,7 +242,7 @@ const App = () => {
 
                 {/* Results Section */}
                 <AnimatePresence>
-                {(preview || isLoading) && (
+                {(preview || isLoading || uploadError) && (
                     <Motion.div
                         initial={{ opacity: 0, y: 50 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -263,35 +267,18 @@ const App = () => {
                                             className="flex flex-col items-center justify-center h-full"
                                         >
                                             <RefreshCw className="w-12 h-12 text-blue-500 animate-spin mb-4" />
-                                            <p className="text-lg text-gray-300">Analyzing image...</p>
+                                            <p className="text-lg text-gray-300">Analyzing image and preparing explanation...</p>
                                         </Motion.div>
                                     )}
-                                    {result && (
+                                    {(result || uploadError) && (
                                         <Motion.div
-                                            key="result"
+                                            key={uploadError ? 'error' : 'result'}
                                             initial={{ opacity: 0, y: 20 }}
                                             animate={{ opacity: 1, y: 0 }}
                                             exit={{ opacity: 0, y: -20 }}
                                             className="flex flex-col items-center md:items-start"
                                         >
-                                            {result.detection === 'Real' ? (
-                                                <div className="flex items-center space-x-3 mb-4">
-                                                    <CheckCircle className="w-12 h-12 text-green-500" />
-                                                    <p className="text-3xl font-bold text-green-400">Authentic</p>
-                                                </div>
-                                            ) : (
-                                                <div className="flex items-center space-x-3 mb-4">
-                                                    <XCircle className="w-12 h-12 text-red-500" />
-                                                    <p className="text-3xl font-bold text-red-400">Deepfake Detected</p>
-                                                </div>
-                                            )}
-                                            <p className="text-lg text-gray-300">Model score: <span className="font-bold text-white">{result.confidence}%</span></p>
-                                            {result.explanation && (
-                                                <div className="mt-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
-                                                    <p className="text-sm text-gray-400 mb-1 font-semibold">Verification guidance:</p>
-                                                    <p className="text-base text-gray-200">{result.explanation}</p>
-                                                </div>
-                                            )}
+                                            <AnalysisSummary result={result} error={uploadError} />
                                             <Motion.button
                                                 onClick={resetUploader}
                                                 whileHover={{ scale: 1.05 }}
@@ -322,7 +309,7 @@ const App = () => {
             content: (
               <div className="grid md:grid-cols-3 gap-8">
                 {[
-                  { title: 'Upload Image', description: 'Choose a JPEG, PNG or WEBP image for the configured API to process.' },
+                  { title: 'Upload Image', description: 'Choose a JPEG, PNG, WEBP or AVIF image for the configured API to process.' },
                   { title: 'AI Analysis', description: 'An EfficientNetB0 classifier estimates whether the image resembles real or AI-generated training examples.' },
                   { title: 'Get Results', description: 'Review the prediction and model score, then check the original source and context.' }
                 ].map((step, index) => (

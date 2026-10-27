@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FILES = [
     "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", ".gitignore",
-    "backend/__init__.py", "backend/app.py", "backend/explanations.py",
+    "backend/__init__.py", "backend/app.py", "backend/explanations.py", "backend/attention.py", "backend/vision.py",
     "backend/requirements.txt", "backend/requirements-test.txt",
     "backend/requirements-watsonx.txt", "backend/.env.example",
     "backend/best_subset_model.h5",
@@ -17,7 +17,7 @@ FILES = [
     "frontend/package.json", "frontend/package-lock.json", "frontend/index.html",
     "frontend/vite.config.js", "frontend/eslint.config.js",
 ]
-TREES = ["frontend/src", "frontend/public", "chrome-extension", "docs", "samples", "training", "tests", "scripts", ".github"]
+TREES = ["frontend/src", "frontend/public", "frontend/tests", "chrome-extension", "docs", "samples", "training", "tests", "scripts", ".github"]
 
 
 def source_files():

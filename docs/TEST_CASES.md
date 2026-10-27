@@ -8,6 +8,7 @@ Run from the repository root with the virtual environment active:
 python -m unittest discover -s tests -v
 python scripts/smoke_test.py
 node --test tests/extension.test.cjs
+npm --prefix frontend test
 npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
@@ -16,7 +17,7 @@ npm --prefix frontend run build
 | --- | --- |
 | Health | Returns process/model-file/load status without loading TensorFlow |
 | Upload | Missing field, empty filename, invalid/truncated bytes return 400 |
-| Formats | PNG, JPEG and WEBP decode; GIF is rejected with 415 |
+| Formats | PNG, JPEG, WEBP and AVIF decode; GIF is rejected with 415 |
 | Limits | Oversized request or decoded pixel dimensions return 413 |
 | Preprocessing | RGB/grayscale/RGBA/EXIF rotation become float32 `(1,224,224,3)` with raw 0–255 scale |
 | Mapping | Fixed scores above/below/at threshold return expected label and score |
@@ -42,3 +43,5 @@ The API suite uses deterministic classifier stubs and is not a model benchmark. 
 ## Separate model-quality evaluation
 
 Provide a licensed, held-out labeled dataset to `training/train.py`. Save dataset provenance and the resulting report. Required metrics include sample count, confusion matrix, per-class precision/recall/F1 and accuracy. Test sources and identities must not leak into training/validation. Repeat on unseen generators and compressed images. Generated fixtures and a handful of original images are insufficient evidence for an accuracy percentage.
+
+Frontend regression tests cover HTTP-format errors, unavailable models, network failures, invalid results and error rendering without a fabricated classification. Attention tests check region summaries and presentation.

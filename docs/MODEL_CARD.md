@@ -31,9 +31,13 @@ The checkpoint was loaded on the author's local environment and produced finite 
 - Face-heavy training data may not represent landscapes, illustrations or other content.
 - A genuine image may be used in a false context; this classifier does not verify accompanying claims.
 - `confidence` is an uncalibrated score, not a percentage guarantee of correctness.
-- Local text guidance is not a heatmap or evidence of which features influenced inference. Optional Watsonx guidance also does not inspect pixels.
+- Local Grad-CAM overlays locate regions influencing the classifier score. They do not identify confirmed edits or establish authenticity. Optional Watsonx text guidance summarizes this evidence and does not inspect image pixels.
 - The API does not detect video or audio deepfakes.
 
 ## Recommended next evaluation
 
 Obtain a licensed dataset manifest; split by person/source and generator; retain an unseen-generator test set; report per-class precision, recall, F1, false positives, sample counts and thresholds. Evaluate calibration and performance by content type and compression level. Keep test images out of training and tuning.
+
+## Independent visual review
+
+When separately enabled, an image-capable model hosted on IBM Watsonx reviews a resized copy of the image for visible clues. This is independent of the local classifier and Grad-CAM, may disagree with them, and may itself hallucinate. The prompt requests specific observations, alternative photographic explanations, and an explicit statement when no clear visual anomalies are present. It does not identify people or supply a numerical authenticity probability.

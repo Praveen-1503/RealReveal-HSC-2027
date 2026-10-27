@@ -8,6 +8,7 @@ from PIL import Image
 
 from backend.app import create_app, preprocess_image
 from backend.explanations import explain_prediction
+from backend.attention import strongest_regions
 
 
 class FixedModel:
@@ -64,12 +65,15 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.upload(stream).status_code, 400)
 
     def test_supported_formats(self):
-        for fmt in ["PNG", "JPEG", "WEBP"]:
+        for fmt in ["PNG", "JPEG", "WEBP", "AVIF"]:
             with self.subTest(format=fmt):
                 self.assertEqual(self.upload(image_bytes(image_format=fmt)).status_code, 200)
 
     def test_unsupported_gif_even_with_png_filename(self):
-        self.assertEqual(self.upload(image_bytes(image_format="GIF")).status_code, 415)
+        response = self.upload(image_bytes(image_format="GIF"))
+        self.assertEqual(response.status_code, 415)
+        self.assertIn('Unsupported image format', response.json['error'])
+        self.assertNotIn('detection', response.json)
 
     def test_request_limit(self):
         self.app.config["MAX_CONTENT_LENGTH"] = 30
@@ -162,6 +166,58 @@ class APITests(unittest.TestCase):
         self.assertIn("not proof", result)
         self.assertIn("have not seen the image", prompts[0])
         self.assertIn("Check the original publisher", result)
+
+    def test_cloud_prompt_includes_actual_attention_evidence(self):
+        prompts = []
+        def generator(prompt):
+            prompts.append(prompt)
+            return 'Inspect the highlighted area and verify the original source.'
+        explain_prediction('Deepfake', 83, generator, {'summary': 'Attention concentrates in the upper left.'})
+        self.assertIn('upper left', prompts[0])
+        self.assertIn('not confirmed edits', prompts[0])
+
+    def test_attention_failure_does_not_fabricate_or_block_prediction(self):
+        with patch('backend.app.explain_attention', side_effect=ValueError('unsupported attention')):
+            response = self.upload()
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json['visual_evidence'])
+        self.assertEqual(response.json['detection'], 'Real')
+
+    def test_attention_region_matches_local_peak(self):
+        heatmap = np.zeros((9, 9))
+        heatmap[:3, :3] = 1
+        self.assertEqual(strongest_regions(heatmap), ['upper left'])
+
+    def test_attention_without_evidence_does_not_invent_a_region(self):
+        self.assertEqual(strongest_regions(np.zeros((9, 9))), [])
+        self.assertEqual(strongest_regions(np.full((9, 9), np.nan)), [])
+
+    def test_visual_reviewer_receives_actual_image(self):
+        received = []
+        def reviewer(image):
+            received.append(image.copy())
+            return 'Possible clues: no clear visual signs found. Verify the original source.'
+        self.app.extensions['visual_reviewer'] = reviewer
+        response = self.upload()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(received[0].size, (24, 16))
+        self.assertEqual(response.json['visual_review']['status'], 'success')
+        self.assertIn('no clear visual signs', response.json['explanation'])
+
+    def test_visual_review_failure_preserves_local_prediction(self):
+        def reviewer(_image):
+            raise RuntimeError('service unavailable')
+        self.app.extensions['visual_reviewer'] = reviewer
+        response = self.upload()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['detection'], 'Real')
+        self.assertEqual(response.json['visual_review']['status'], 'unavailable')
+        self.assertIn('not proof', response.json['explanation'])
+
+    def test_rejected_upload_is_not_sent_to_visual_reviewer(self):
+        with patch('backend.app.review_image') as review:
+            self.assertEqual(self.upload(image_bytes(image_format='GIF')).status_code, 415)
+        review.assert_not_called()
 
     def test_cors_origin_policy(self):
         allowed = self.client.get("/health", headers={"Origin": "http://127.0.0.1:5173"})

@@ -17,6 +17,8 @@ flowchart LR
     Worker -->|multipart file| API
     API --> Validate[Decode and validate with Pillow]
     Validate --> Preprocess[RGB 224x224 float32]
+    Validate -. separately enabled resized image .-> Vision[IBM-hosted vision model]
+    Vision -. possible visual clues .-> Result
     Preprocess --> Model[EfficientNetB0 Keras checkpoint]
     Model --> Score[Sigmoid score and label]
     Score --> Guidance[Local verification guidance]
@@ -56,6 +58,8 @@ sequenceDiagram
 | `frontend/src/App.jsx` | Image selection, preview, API call, result/error display; abort superseded requests |
 | `backend/app.py` | Configuration, CORS, request validation, preprocessing, lazy model loading and JSON responses |
 | `backend/explanations.py` | Local guidance and optional Watsonx adapter with fallback |
+| `backend/attention.py` | Local Grad-CAM from the final spatial features and pre-sigmoid class score |
+| `backend/vision.py` | Separately enabled IBM image-chat review, resized image encoding and explicit failure status |
 | `chrome-extension/background.js` | Context menu and cross-origin image download/API requests |
 | `chrome-extension/content.js` | Loading/result overlays; escape returned strings before inserting HTML |
 | `training/train.py` | Train/evaluate a compatible Keras classifier on user-supplied data |
@@ -77,7 +81,7 @@ With the default threshold, `score > 0.5` maps to `Real`, otherwise `Deepfake`. 
 
 - The API does not intentionally persist uploaded image bytes. There is no application database or upload directory.
 - Multipart parsing may use operating-system temporary storage for larger files; operating-system/proxy behavior is outside application retention guarantees.
-- Only the optional Watsonx path sends a prediction label and score to an external text service. It never receives image bytes and cannot justify a prediction with observed visual details.
+- Text-only Watsonx guidance receives the label, score and attention summary. Separately enabled IBM visual review receives a resized JPEG image, with EXIF metadata omitted, and describes possible visible clues. That review is independent of the classifier and can disagree with it.
 - Debug mode is off and the development server binds to loopback by default.
 - A per-process lock serializes loading and predictions. Multiple Gunicorn workers each load their own checkpoint and use additional memory.
 - The Chrome extension has HTTP/HTTPS host access to fetch the explicitly selected image. It is a local demonstration and does not scan all images on a page automatically.
@@ -98,3 +102,9 @@ With the default threshold, `score > 0.5` maps to `Real`, otherwise `Deepfake`. 
 The checkpoint has not been independently benchmarked for general internet images or unseen generators. Record source/license, separate training/validation/test identities, and evaluate precision, recall, false-positive rate and F1 on a held-out set. Test compressed/reencoded images and generators absent from training. Evaluate calibration before interpreting scores probabilistically.
 
 Awareness sessions, local-language content, college/NGO partnerships and public-access sustainability are future proposals, not existing deployments. No fraud reduction or community reach is claimed as measured impact.
+
+## Explanation and upload fixes
+
+The frontend keeps failed requests separate from classification results. HTTP errors display the server message without a class label or score. JPEG, PNG, WEBP and AVIF are decoded locally.
+
+Grad-CAM uses the deployed EfficientNet top_activation feature map and the selected class logit. The overlay identifies influential regions; it does not prove edits. Only the label, score and attention summary are sent to optional IBM text guidance. The attention overlay remains local. With ENABLE_IBM_VISION=1, a resized image is sent to IBM Watsonx for an independent visual review. IBM chat API is used for both cloud paths.

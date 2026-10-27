@@ -18,12 +18,13 @@ The prototype returns a `Real` or `Deepfake` prediction, a model score and verif
 
 ## What works
 
-- Upload JPEG, PNG or WEBP images through the web app.
+- Upload JPEG, PNG, WEBP or AVIF images through the web app.
 - Run inference with the included `backend/best_subset_model.h5` checkpoint.
 - Right-click an HTTP/HTTPS image in Chrome and select **Verify with RealReveal**.
 - View a classification, model score and general source-verification advice.
+- View a local Grad-CAM overlay showing which regions influenced the classifier. IBM text guidance can summarize this evidence without receiving image pixels.
 - Run deterministic API tests without TensorFlow or any cloud credentials.
-- Optionally request additional text guidance from your own IBM Watsonx project. The local demo works without it.
+- Optionally send a resized image to an image-capable model hosted on IBM Watsonx for a review of visible clues. This is separately enabled and disclosed in the upload interface. The local demo works without it.
 
 Video/audio detection, spectral analysis, automatic retraining, multilingual lessons and NGO pilots are not implemented. No independently verified accuracy percentage is claimed.
 
@@ -61,7 +62,7 @@ cp .env.example .env
 npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-Open `http://127.0.0.1:5173`, choose an image, and review the result. Keep the backend terminal running. JPEG, PNG and WEBP are accepted; the default upload cap is 8 MB and decoded images are limited to 20 million pixels. Use the included synthetic fixtures to exercise the upload flow; they are not labeled accuracy benchmarks.
+Open `http://127.0.0.1:5173`, choose an image, and review the result. Keep the backend terminal running. JPEG, PNG, WEBP and AVIF are accepted; the default upload cap is 8 MB and decoded images are limited to 20 million pixels. Use the included synthetic fixtures to exercise the upload flow; they are not labeled accuracy benchmarks.
 
 ### 3. Chrome extension (optional)
 
@@ -89,10 +90,12 @@ Backend variables are read from `backend/.env`. Existing process variables take 
 | `IBM_REGION` | `us-south` | Your Watsonx service region |
 | `IBM_PROJECT_ID` / `IBM_SPACE_ID` | empty | Workspace identifier; space takes precedence |
 | `IBM_MODEL_ID` | empty | A supported text model available in your own workspace |
+| `ENABLE_IBM_VISION` | `0` | Set `1` to send uploaded images to IBM for visual review |
+| `IBM_VISION_MODEL_ID` | Llama 4 Maverick model in example | An image-chat model available in your workspace |
 
 The frontend reads `VITE_API_BASE_URL` from `frontend/.env`, defaulting to `http://127.0.0.1:5002`. Restart Vite after changing it. Variables prefixed with `VITE_` are public client configuration and must never hold secrets.
 
-For optional Watsonx guidance, install `backend/requirements-watsonx.txt` and configure the IBM variables. This integration is optional and has not been validated against a live account in the submission checks. The prompt sends the prediction label and score, never image bytes. Generated text is general advice, not visual evidence. Failures fall back to local guidance.
+For optional Watsonx features, install `backend/requirements-watsonx.txt` and configure the IBM variables. `ENABLE_WATSONX=1` enables text-only interpretation of the label, score and local attention summary. `ENABLE_IBM_VISION=1` separately enables a resized JPEG copy of the image to be sent to IBM Watsonx (up to 1024 pixels per side, EXIF metadata omitted). Obtain permission before enabling image sharing for other users. The vision model reviews visible clues independently; its observations may differ from the classifier and are not proof of manipulation. Cloud failures are shown explicitly while local detection remains available.
 
 ## API example
 
@@ -102,7 +105,7 @@ curl -X POST http://127.0.0.1:5002/predict \
   -F 'file=@samples/images/gradient.png'
 ```
 
-Successful responses contain `detection`, `confidence`, `explanation` and `advisory`. The label and score depend on the image and checkpoint; no fixed response is promised for the generated fixture.
+Successful responses contain `detection`, `confidence`, `explanation`, `advisory`, `visual_evidence` and `visual_review`. The label and score depend on the image and checkpoint; no fixed response is promised for the generated fixture.
 
 Status codes: `400` missing/unreadable file, `413` request/pixel limit exceeded, `415` unsupported image format, `503` unavailable checkpoint, `500` inference failure. The model is loaded lazily, and missing weights never produce a fabricated prediction.
 
@@ -115,6 +118,7 @@ python -m unittest discover -s tests -v
 python scripts/smoke_test.py
 node --test tests/extension.test.cjs
 npm --prefix frontend run lint
+npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
